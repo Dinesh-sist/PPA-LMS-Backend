@@ -11,16 +11,19 @@ export function registerDataRoutes(app, deps) {
   const LAND_DATA_CONFIG = {
     lease: {
       idColumn: "LeaseID",
+      objectIdColumn: "OBJECTID",
       tableName: "dbo.LeaseData",
       visibleColumns: ["LeaseID", "Area__in_S"],
     },
     market: {
       idColumn: "MarketID",
+      objectIdColumn: "OBJECTID",
       tableName: "dbo.MarketData",
       visibleColumns: ["MarketID", "Refname"],
     },
     license: {
       idColumn: "LicenseID",
+      objectIdColumn: "OBJECTID",
       tableName: "dbo.LicenseData",
       visibleColumns: ["LicenseID", "AREA_ALLOT"],
     },
@@ -66,13 +69,14 @@ export function registerDataRoutes(app, deps) {
     }
   });
 
-  app.get("/api/LandData", authenticateToken, authorizeRoles("Manager", "Admin"), async (req, res) => {
+  app.get("/api/LandData", authenticateToken, authorizeRoles("Manager", "Admin", "User"), async (req, res) => {
     try {
       const p = await getPool();
       const config = getLandConfig(req.query.type);
       const selectCols = config.visibleColumns.map((col) => `[${col}]`).join(", ");
       const result = await p.request().query(`
         SELECT
+          [${config.objectIdColumn}] AS OBJECTID,
           [${config.idColumn}] AS RowID,
           ${selectCols}
         FROM ${config.tableName}
@@ -119,6 +123,7 @@ export function registerDataRoutes(app, deps) {
         .input("id", sql.Int, rowId)
         .query(`
           SELECT
+            [${config.objectIdColumn}] AS OBJECTID,
             [${config.idColumn}] AS RowID,
             ${selectCols}
           FROM ${config.tableName}
