@@ -47,8 +47,8 @@ if (!JWT_SECRET) {
 }
 
 const dbConfig = {
-  user: "lmsuser",
-  password: "lms@123",
+  user: "lmslog",
+  password: "lmsppap",
   server: "localhost",
   database: "LeaseManagementDB",
   port: 1433,

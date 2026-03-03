@@ -1,6 +1,6 @@
 import Razorpay from "razorpay";
 
-export const createRazorpayInstance = () => {
+export default function createRazorpayInstance() {
   console.log("KEY ID:", process.env.RAZORPAY_KEY_ID);
   console.log("KEY SECRET:", process.env.RAZORPAY_KEY_SECRET);
   return new Razorpay({
