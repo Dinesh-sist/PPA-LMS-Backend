@@ -29,6 +29,34 @@ export function registerDataRoutes(app, deps) {
     },
   };
 
+  let eoiInfraPromise;
+  async function ensureEoiInfrastructure() {
+    if (!eoiInfraPromise) {
+      eoiInfraPromise = (async () => {
+        const p = await getPool();
+        await p.request().query(`
+          IF OBJECT_ID('dbo.EoiRequests', 'U') IS NULL
+          BEGIN
+            CREATE TABLE dbo.EoiRequests (
+              EOIID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+              RequestedByUserID INT NOT NULL,
+              RequestedLesseeID INT NULL,
+              EOIConsumerName NVARCHAR(200) NOT NULL,
+              EOILandType NVARCHAR(40) NOT NULL,
+              EOILandName NVARCHAR(200) NULL,
+              ObjectID INT NULL,
+              EOIAppliedDate DATETIME2 NOT NULL CONSTRAINT DF_EoiRequests_AppliedDate DEFAULT SYSUTCDATETIME(),
+              EOIStatus NVARCHAR(40) NOT NULL CONSTRAINT DF_EoiRequests_Status DEFAULT 'Applied',
+              CONSTRAINT FK_EoiRequests_Users FOREIGN KEY (RequestedByUserID) REFERENCES dbo.Users(UserID),
+              CONSTRAINT FK_EoiRequests_Lessees FOREIGN KEY (RequestedLesseeID) REFERENCES dbo.Lessees(LesseeID)
+            );
+          END
+        `);
+      })();
+    }
+    return eoiInfraPromise;
+  }
+
   function getLandConfig(typeValue) {
     const rawType = String(typeValue || "lease").trim().toLowerCase();
     return LAND_DATA_CONFIG[rawType] ? { type: rawType, ...LAND_DATA_CONFIG[rawType] } : { type: "lease", ...LAND_DATA_CONFIG.lease };
@@ -169,24 +197,140 @@ export function registerDataRoutes(app, deps) {
 
   app.get("/api/EoiTable", authenticateToken, authorizeRoles("Manager", "Admin"), async (req, res) => {
     try {
+      await ensureEoiInfrastructure();
       const p = await getPool();
       const result = await p.request().query(`
         SELECT
-          ld.LeaseID AS EOIID,
-          l.LesseeName AS EOIConsumerName,
-          COALESCE(c.CategoryName, CAST('' AS VARCHAR(100))) AS EOILandType,
-          COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS EOILandName,
-          ld.DateFrom AS EOIAppliedDate,
-          CAST('' AS VARCHAR(100)) AS EOIStatus
-        FROM dbo.LeaseDetails ld
-        INNER JOIN dbo.Lessees l ON l.LesseeID = ld.LesseeID
-        LEFT JOIN dbo.Categories c ON c.CategoryID = l.CategoryID
-        ORDER BY ld.LeaseID
+          e.EOIID,
+          e.EOIConsumerName,
+          e.EOILandType,
+          e.EOILandName,
+          e.EOIAppliedDate,
+          e.EOIStatus
+        FROM dbo.EoiRequests e
+        ORDER BY e.EOIID DESC
       `);
       res.json(result.recordset);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "DB query failed" });
+    }
+  });
+
+  app.post("/api/EoiTable", authenticateToken, authorizeRoles("User", "Admin"), async (req, res) => {
+    try {
+      await ensureEoiInfrastructure();
+      const landTypeRaw = String(req.body?.landType || "").trim().toLowerCase();
+      const landType = ["lease", "market", "license"].includes(landTypeRaw) ? landTypeRaw : "";
+      const objectId = Number(req.body?.objectId);
+      const landNameRaw = req.body?.landName;
+      const landName = landNameRaw == null ? null : String(landNameRaw).trim();
+      const normalizedLandName = landType === "market" ? null : (landName || null);
+
+      if (!landType) {
+        return res.status(400).json({ error: "Invalid land type" });
+      }
+      if (!Number.isInteger(objectId) || objectId <= 0) {
+        return res.status(400).json({ error: "Invalid object id" });
+      }
+
+      const p = await getPool();
+      let consumerName = String(req.user?.username || "").trim() || "Unknown User";
+      let requestedLesseeId = null;
+
+      if (req.user?.role === "User") {
+        const lessee = await resolveLesseeByUsername(p, req.user.username);
+        if (!lessee?.LesseeID) {
+          return res.status(404).json({ error: "Lessee record not found for this user" });
+        }
+        requestedLesseeId = Number(lessee.LesseeID);
+        consumerName = String(lessee.LesseeName || consumerName);
+      }
+
+      const duplicateCheck = await p
+        .request()
+        .input("requestedByUserId", sql.Int, Number(req.user.userId))
+        .input("landType", sql.NVarChar(40), landType)
+        .input("objectId", sql.Int, objectId)
+        .query(`
+          SELECT TOP 1 EOIID
+          FROM dbo.EoiRequests
+          WHERE RequestedByUserID = @requestedByUserId
+            AND EOILandType = @landType
+            AND ObjectID = @objectId
+            AND EOIStatus IN ('Applied', 'Pending')
+          ORDER BY EOIID DESC
+        `);
+
+      if (duplicateCheck.recordset?.length) {
+        return res.status(409).json({ error: "EOI already applied for this land" });
+      }
+
+      const insertResult = await p
+        .request()
+        .input("requestedByUserId", sql.Int, Number(req.user.userId))
+        .input("requestedLesseeId", sql.Int, requestedLesseeId)
+        .input("consumerName", sql.NVarChar(200), consumerName)
+        .input("landType", sql.NVarChar(40), landType)
+        .input("landName", sql.NVarChar(200), normalizedLandName)
+        .input("objectId", sql.Int, objectId)
+        .query(`
+          INSERT INTO dbo.EoiRequests
+            (RequestedByUserID, RequestedLesseeID, EOIConsumerName, EOILandType, EOILandName, ObjectID)
+          OUTPUT
+            inserted.EOIID,
+            inserted.EOIConsumerName,
+            inserted.EOILandType,
+            inserted.EOILandName,
+            inserted.EOIAppliedDate,
+            inserted.EOIStatus
+          VALUES
+            (@requestedByUserId, @requestedLesseeId, @consumerName, @landType, @landName, @objectId)
+        `);
+
+      res.status(201).json(insertResult.recordset?.[0] || null);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "EOI request failed" });
+    }
+  });
+
+  app.get("/api/EoiApplicants", authenticateToken, authorizeRoles("Admin", "Manager"), async (req, res) => {
+    try {
+      await ensureEoiInfrastructure();
+      const landTypeRaw = String(req.query?.landType || "").trim().toLowerCase();
+      const landType = ["lease", "market", "license"].includes(landTypeRaw) ? landTypeRaw : "";
+      const objectId = Number(req.query?.objectId);
+
+      if (!landType) {
+        return res.status(400).json({ error: "Invalid land type" });
+      }
+      if (!Number.isInteger(objectId) || objectId <= 0) {
+        return res.status(400).json({ error: "Invalid object id" });
+      }
+
+      const p = await getPool();
+      const result = await p
+        .request()
+        .input("landType", sql.NVarChar(40), landType)
+        .input("objectId", sql.Int, objectId)
+        .query(`
+          SELECT
+            e.EOIID,
+            COALESCE(u.Username, e.EOIConsumerName, 'Unknown User') AS Username,
+            COALESCE(l.EmailID, CASE WHEN u.Username LIKE '%@%' THEN u.Username ELSE '' END, '') AS Email
+          FROM dbo.EoiRequests e
+          LEFT JOIN dbo.Users u ON u.UserID = e.RequestedByUserID
+          LEFT JOIN dbo.Lessees l ON l.LesseeID = e.RequestedLesseeID
+          WHERE e.EOILandType = @landType
+            AND e.ObjectID = @objectId
+          ORDER BY e.EOIID DESC
+        `);
+
+      res.json(result.recordset || []);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to load EOI applicants" });
     }
   });
 
@@ -233,6 +377,66 @@ export function registerDataRoutes(app, deps) {
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "DB query failed" });
+    }
+  });
+
+  app.put("/api/UserProfile", authenticateToken, authorizeRoles("User"), async (req, res) => {
+    try {
+      const p = await getPool();
+      const lessee = await resolveLesseeByUsername(p, req.user.username);
+      if (!lessee?.LesseeID) {
+        return res.status(404).json({ error: "Lessee record not found for this user" });
+      }
+
+      const lesseeId = Number(lessee.LesseeID);
+      const companyName = String(req.body?.CompanyName ?? "").trim();
+      const authorityName = String(req.body?.AuthorityName ?? "").trim();
+      const emailId = String(req.body?.EmailId ?? "").trim();
+      const phone = String(req.body?.Phone ?? "").trim();
+      const address = String(req.body?.Address ?? "").trim();
+
+      const lesseeName = authorityName || companyName;
+      if (!lesseeName) {
+        return res.status(400).json({ error: "Name is required" });
+      }
+
+      await p
+        .request()
+        .input("lesseeId", sql.Int, lesseeId)
+        .input("lesseeName", sql.NVarChar(200), lesseeName)
+        .input("emailId", sql.NVarChar(255), emailId || null)
+        .input("phone", sql.NVarChar(50), phone || null)
+        .input("address", sql.NVarChar(sql.MAX), address || null)
+        .query(`
+          UPDATE dbo.Lessees
+          SET
+            LesseeName = @lesseeName,
+            EmailID = @emailId,
+            ContactNo = @phone,
+            Address = @address
+          WHERE LesseeID = @lesseeId
+        `);
+
+      const result = await p
+        .request()
+        .input("lesseeId", sql.Int, lesseeId)
+        .query(`
+          SELECT
+            l.LesseeName AS CompanyName,
+            c.CategoryName AS OrganisationType,
+            l.LesseeName AS AuthorityName,
+            l.EmailID AS EmailId,
+            l.Address,
+            l.ContactNo AS Phone
+          FROM dbo.Lessees l
+          LEFT JOIN dbo.Categories c ON c.CategoryID = l.CategoryID
+          WHERE l.LesseeID = @lesseeId
+        `);
+
+      res.json(result.recordset?.[0] || null);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Profile update failed" });
     }
   });
 
