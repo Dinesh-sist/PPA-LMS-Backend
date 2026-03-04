@@ -1,10 +1,10 @@
-import crypto from "crypto";
-import { createRazorpayInstance } from "../config/razorpay.config.js";
-
+import createRazorpayInstance from '../config/razorpay.config.js'
 
 export const createOrder = async (req, res) => {
   try {
-    const { amount } = req.body;
+    const razorpayInstance = createRazorpayInstance();
+
+    const amount = 1000; // Hardcoded ₹1000
 
     const options = {
       amount: amount * 100,
@@ -20,6 +20,7 @@ export const createOrder = async (req, res) => {
     });
 
   } catch (error) {
+    console.log("CREATE ORDER ERROR:", error);
     return res.status(500).json({
       success: false,
       message: error.message
@@ -35,12 +36,17 @@ export const verifyPayment = async (req, res) => {
       razorpay_signature
     } = req.body;
 
+    console.log("VERIFY BODY:", req.body);
+
     const secret = process.env.RAZORPAY_KEY_SECRET;
 
     const hmac = crypto.createHmac("sha256", secret);
-    hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
+    hmac.update(`${razorpay_order_id}|${razorpay_payment_id}`);
 
     const generatedSignature = hmac.digest("hex");
+
+    console.log("Generated:", generatedSignature);
+    console.log("Received:", razorpay_signature);
 
     if (generatedSignature === razorpay_signature) {
       return res.status(200).json({
@@ -55,9 +61,10 @@ export const verifyPayment = async (req, res) => {
     }
 
   } catch (error) {
+    console.log("VERIFY ERROR:", error);
     return res.status(500).json({
       success: false,
-      message: "Verification failed"
+      message: error.message
     });
   }
 };

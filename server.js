@@ -47,7 +47,7 @@ if (!JWT_SECRET) {
 }
 
 const dbConfig = {
-  user: "lmsuser",
+  user: "lms",
   password: "lms@123",
   server: "localhost",
   database: "LeaseManagementDB",
