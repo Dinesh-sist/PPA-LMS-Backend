@@ -103,6 +103,7 @@ export function registerDemandRoutes(app, deps) {
           d.Amount,
           d.Description,
           d.DocumentFileName,
+          d.AdminRemarks,
           CONCAT('/api/demand-notes/', d.DemandNoteID, '/download') AS DownloadPath
         FROM dbo.DemandNotes d
         INNER JOIN dbo.Lessees l ON l.LesseeID = d.LesseeID

@@ -1,19 +1,19 @@
-import createRazorpayInstance from '../config/razorpay.config.js'
+import crypto from "crypto";
+import createRazorpayInstance from "../config/razorpay.config.js";
+
 
 export const createOrder = async (req, res) => {
   try {
     const razorpayInstance = createRazorpayInstance();
-
-    const amount = 1000; // Hardcoded ₹1000
-
+    // const { amount } = req.body;
+    const amount = 1000;
     const options = {
-      amount: amount * 100,
+      amount: amount * 100, 
       currency: "INR",
       receipt: `receipt_${Date.now()}`
     };
-
+    
     const order = await razorpayInstance.orders.create(options);
-
     return res.status(200).json({
       success: true,
       order
