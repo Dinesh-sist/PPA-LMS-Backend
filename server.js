@@ -136,6 +136,7 @@ async function ensureDemandNoteInfrastructure() {
             DocumentPath NVARCHAR(500) NOT NULL,
             DocumentFileName NVARCHAR(260) NOT NULL,
             Status NVARCHAR(20) NOT NULL CONSTRAINT DF_DemandNotes_Status DEFAULT 'Generated',
+            PaymentStatus NVARCHAR(20) NOT NULL CONSTRAINT DF_DemandNotes_PaymentStatus DEFAULT 'Not Paid',
             IssuedByUserID INT NULL,
             IssuedAt DATETIME2 NULL,
             RejectedByUserID INT NULL,
@@ -152,6 +153,13 @@ async function ensureDemandNoteInfrastructure() {
         IF COL_LENGTH('dbo.DemandNotes', 'LandType') IS NULL
         BEGIN
           ALTER TABLE dbo.DemandNotes ADD LandType NVARCHAR(100) NULL;
+        END
+
+        IF COL_LENGTH('dbo.DemandNotes', 'PaymentStatus') IS NULL
+        BEGIN
+          ALTER TABLE dbo.DemandNotes
+          ADD PaymentStatus NVARCHAR(20) NOT NULL
+          CONSTRAINT DF_DemandNotes_PaymentStatus DEFAULT 'Not Paid';
         END
       `);
       await fs.mkdir(DEMAND_NOTES_DIR, { recursive: true });

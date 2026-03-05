@@ -100,6 +100,7 @@ export function registerDemandRoutes(app, deps) {
           COALESCE(d.DueDate, ld.DateTo) AS dueDate,
           d.GeneratedAt AS demandGenerationDate,
           d.Status AS DemandStatus,
+          d.PaymentStatus,
           d.Amount,
           d.Description,
           d.DocumentFileName,
@@ -157,10 +158,10 @@ export function registerDemandRoutes(app, deps) {
         .input("documentFileName", sql.NVarChar(260), "")
         .query(`
           INSERT INTO dbo.DemandNotes
-            (LesseeID, LeaseID, GeneratedByUserID, DueDate, Amount, Description, LandType, DocumentPath, DocumentFileName, Status)
+            (LesseeID, LeaseID, GeneratedByUserID, DueDate, Amount, Description, LandType, DocumentPath, DocumentFileName, Status, PaymentStatus)
           OUTPUT INSERTED.DemandNoteID
           VALUES
-            (@lesseeId, @leaseId, @generatedByUserId, @dueDate, @amount, @description, @landType, @documentPath, @documentFileName, 'Generated')
+            (@lesseeId, @leaseId, @generatedByUserId, @dueDate, @amount, @description, @landType, @documentPath, @documentFileName, 'Generated', 'Not Paid')
         `);
 
       const demandNoteId = Number(insertResult.recordset[0]?.DemandNoteID);
@@ -255,6 +256,7 @@ export function registerDemandRoutes(app, deps) {
           UPDATE dbo.DemandNotes
           SET
             Status = 'Issued',
+            PaymentStatus = COALESCE(PaymentStatus, 'Not Paid'),
             IssuedByUserID = @issuedByUserId,
             IssuedAt = SYSUTCDATETIME(),
             RejectedByUserID = NULL,
@@ -309,6 +311,61 @@ export function registerDemandRoutes(app, deps) {
     } catch (err) {
       console.error(err);
       return res.status(500).json({ error: "Reject action failed" });
+    }
+  });
+
+  app.post("/api/demand-notes/:id/mark-paid", authenticateToken, authorizeRoles("User", "Admin"), async (req, res) => {
+    try {
+      await ensureDemandNoteInfrastructure();
+      const demandNoteId = Number(req.params.id);
+      if (!Number.isInteger(demandNoteId) || demandNoteId <= 0) {
+        return res.status(400).json({ error: "Invalid demand note id" });
+      }
+
+      const p = await getPool();
+      let lesseeId = null;
+      if (req.user?.role === "User") {
+        const ownLessee = await resolveLesseeByUsername(p, req.user.username);
+        if (!ownLessee?.LesseeID) {
+          return res.status(403).json({ error: "Access denied for this demand note" });
+        }
+        lesseeId = Number(ownLessee.LesseeID);
+      }
+
+      const updateDemandResult = await p
+        .request()
+        .input("demandNoteId", sql.Int, demandNoteId)
+        .input("lesseeId", sql.Int, lesseeId)
+        .query(`
+          UPDATE d
+          SET d.PaymentStatus = 'Paid'
+          FROM dbo.DemandNotes d
+          WHERE d.DemandNoteID = @demandNoteId
+            AND d.Status = 'Issued'
+            AND (@lesseeId IS NULL OR d.LesseeID = @lesseeId)
+        `);
+
+      if ((updateDemandResult.rowsAffected?.[0] || 0) === 0) {
+        return res.status(404).json({ error: "Issued demand note not found for this user" });
+      }
+
+      await p
+        .request()
+        .input("demandNoteId", sql.Int, demandNoteId)
+        .input("lesseeId", sql.Int, lesseeId)
+        .query(`
+          UPDATE ld
+          SET ld.PaymentStatus = 'Paid'
+          FROM dbo.LeaseDetails ld
+          INNER JOIN dbo.DemandNotes d ON d.LeaseID = ld.LeaseID
+          WHERE d.DemandNoteID = @demandNoteId
+            AND (@lesseeId IS NULL OR d.LesseeID = @lesseeId)
+        `);
+
+      return res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Failed to update payment status" });
     }
   });
 

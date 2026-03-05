@@ -467,8 +467,8 @@ export function registerDataRoutes(app, deps) {
               ld.LeaseID,
               ld.AreaDivision,
               ld.TotalArea,
-              ld.PaymentStatus,
-              ld.PaymentStatus AS PaymentStatusCode,
+              COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatus,
+              COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatusCode,
               ld.DateFrom,
               ld.DateTo,
               COALESCE(dn.DueDate, ld.DateTo) AS LeaseEndDate,
@@ -491,6 +491,7 @@ export function registerDataRoutes(app, deps) {
                 d.Amount,
                 d.DueDate,
                 d.Status,
+                d.PaymentStatus,
                 d.DocumentFileName,
                 d.LandType
               FROM dbo.DemandNotes d
@@ -516,8 +517,8 @@ export function registerDataRoutes(app, deps) {
             ld.LeaseID,
             ld.AreaDivision,
             ld.TotalArea,
-            ld.PaymentStatus,
-            ld.PaymentStatus AS PaymentStatusCode,
+            COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatus,
+            COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatusCode,
             ld.DateFrom,
             ld.DateTo,
             COALESCE(dn.DueDate, ld.DateTo) AS LeaseEndDate,
@@ -540,6 +541,7 @@ export function registerDataRoutes(app, deps) {
               d.Amount,
               d.DueDate,
               d.Status,
+              d.PaymentStatus,
               d.DocumentFileName,
               d.LandType
             FROM dbo.DemandNotes d
@@ -588,8 +590,8 @@ export function registerDataRoutes(app, deps) {
             ld.LeaseID,
             ld.AreaDivision,
             ld.TotalArea,
-            ld.PaymentStatus,
-            ld.PaymentStatus AS PaymentStatusCode,
+            COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatus,
+            COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatusCode,
             ld.DateFrom,
             ld.DateTo,
             COALESCE(dn.DueDate, ld.DateTo) AS LeaseEndDate,
@@ -612,6 +614,7 @@ export function registerDataRoutes(app, deps) {
               d.Amount,
               d.DueDate,
               d.Status,
+              d.PaymentStatus,
               d.DocumentFileName,
               d.LandType
             FROM dbo.DemandNotes d
