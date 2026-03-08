@@ -90,6 +90,7 @@ export function registerDemandRoutes(app, deps) {
           d.LeaseID,
           l.LesseeID AS UserID,
           l.LesseeName AS name,
+          l.LandType,
           COALESCE(d.LandType, c.CategoryName, CAST('' AS VARCHAR(100))) AS type,
           COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS land,
           CASE
@@ -129,6 +130,7 @@ export function registerDemandRoutes(app, deps) {
       const amountRaw = req.body?.amount;
       const amount = amountRaw === null || amountRaw === undefined || String(amountRaw).trim() === "" ? null : Number(amountRaw);
       const description = req.body?.description ? String(req.body.description).trim() : null;
+      const normalizedLandType = "lease";
 
       if (!Number.isInteger(lesseeId) || lesseeId <= 0) {
         return res.status(400).json({ error: "Valid lesseeId is required" });
@@ -142,7 +144,7 @@ export function registerDemandRoutes(app, deps) {
 
       const { base } = await resolveDemandBaseRecord({ lesseeId, leaseId });
       if (!base) {
-        return res.status(404).json({ error: "Lessee/lease record not found" });
+        return res.status(404).json({ error : "Lessee/lease record not found" });
       }
 
       const insertResult = await p
@@ -153,7 +155,7 @@ export function registerDemandRoutes(app, deps) {
         .input("dueDate", sql.Date, dueDate)
         .input("amount", sql.Decimal(18, 2), amount)
         .input("description", sql.NVarChar(1000), description)
-        .input("landType", sql.NVarChar(100), null)
+        .input("landType", sql.NVarChar(100), normalizedLandType)
         .input("documentPath", sql.NVarChar(500), "")
         .input("documentFileName", sql.NVarChar(260), "")
         .query(`
@@ -168,6 +170,22 @@ export function registerDemandRoutes(app, deps) {
       if (!demandNoteId) {
         return res.status(500).json({ error: "Failed to create demand note record" });
       }
+      await p
+        .request()
+        .input("demandNoteId", sql.Int, demandNoteId)
+        .query(`
+          UPDATE dbo.DemandNotes
+          SET
+            DemandID = CASE
+              WHEN DemandID IS NULL OR LTRIM(RTRIM(DemandID)) = '' THEN CONCAT('DM-', CAST(DemandNoteID AS VARCHAR(30)))
+              ELSE DemandID
+            END,
+            TransactionID = CASE
+              WHEN TransactionID IS NULL OR LTRIM(RTRIM(TransactionID)) = '' THEN CONCAT('TS-', CAST(DemandNoteID AS VARCHAR(30)))
+              ELSE TransactionID
+            END
+          WHERE DemandNoteID = @demandNoteId
+        `);
 
       try {
         const demandFileUserName = await resolveDemandFileUserName(base);
@@ -256,6 +274,14 @@ export function registerDemandRoutes(app, deps) {
           UPDATE dbo.DemandNotes
           SET
             Status = 'Issued',
+            DemandID = CASE
+              WHEN DemandID IS NULL OR LTRIM(RTRIM(DemandID)) = '' THEN CONCAT('DM-', CAST(DemandNoteID AS VARCHAR(30)))
+              ELSE DemandID
+            END,
+            TransactionID = CASE
+              WHEN TransactionID IS NULL OR LTRIM(RTRIM(TransactionID)) = '' THEN CONCAT('TS-', CAST(DemandNoteID AS VARCHAR(30)))
+              ELSE TransactionID
+            END,
             PaymentStatus = COALESCE(PaymentStatus, 'Not Paid'),
             IssuedByUserID = @issuedByUserId,
             IssuedAt = SYSUTCDATETIME(),
