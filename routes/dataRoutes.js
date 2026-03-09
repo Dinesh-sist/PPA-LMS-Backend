@@ -25,7 +25,7 @@ export function registerDataRoutes(app, deps) {
       idColumn: "LicenseID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.LicenseData",
-      visibleColumns: ["LicenseID", "AREA_ALLOT"],
+      visibleColumns: [ "AREA_ALLOT"],
     },
   };
 
