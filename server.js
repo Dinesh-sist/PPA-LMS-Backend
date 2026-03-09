@@ -60,7 +60,7 @@ const dbConfig = {
   user: "sa",
   password: "Gklg2401",
   server: "GOKUL",
-  database: "LeaseManagementDB",
+  database: "LeaseMgmtDB",
   port: 1433,
   options: {
     trustServerCertificate: true,
@@ -136,6 +136,8 @@ async function ensureDemandNoteInfrastructure() {
         BEGIN
           CREATE TABLE dbo.DemandNotes (
             DemandNoteID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+            DemandID NVARCHAR(50) NULL,
+            TransactionID NVARCHAR(50) NULL,
             LesseeID INT NOT NULL,
             LeaseID INT NULL,
             GeneratedByUserID INT NOT NULL,
@@ -147,6 +149,7 @@ async function ensureDemandNoteInfrastructure() {
             DocumentPath NVARCHAR(500) NOT NULL,
             DocumentFileName NVARCHAR(260) NOT NULL,
             Status NVARCHAR(20) NOT NULL CONSTRAINT DF_DemandNotes_Status DEFAULT 'Generated',
+            PaymentStatus NVARCHAR(20) NOT NULL CONSTRAINT DF_DemandNotes_PaymentStatus DEFAULT 'Not Paid',
             IssuedByUserID INT NULL,
             IssuedAt DATETIME2 NULL,
             RejectedByUserID INT NULL,
@@ -164,6 +167,38 @@ async function ensureDemandNoteInfrastructure() {
         BEGIN
           ALTER TABLE dbo.DemandNotes ADD LandType NVARCHAR(100) NULL;
         END
+
+        IF COL_LENGTH('dbo.DemandNotes', 'DemandID') IS NULL
+        BEGIN
+          ALTER TABLE dbo.DemandNotes ADD DemandID NVARCHAR(50) NULL;
+        END
+
+        IF COL_LENGTH('dbo.DemandNotes', 'TransactionID') IS NULL
+        BEGIN
+          ALTER TABLE dbo.DemandNotes ADD TransactionID NVARCHAR(50) NULL;
+        END
+
+        IF COL_LENGTH('dbo.DemandNotes', 'PaymentStatus') IS NULL
+        BEGIN
+          ALTER TABLE dbo.DemandNotes
+          ADD PaymentStatus NVARCHAR(20) NOT NULL
+          CONSTRAINT DF_DemandNotes_PaymentStatus DEFAULT 'Not Paid';
+        END
+
+        UPDATE dbo.DemandNotes
+        SET
+          DemandID = CASE
+            WHEN DemandID IS NULL OR LTRIM(RTRIM(DemandID)) = '' THEN CONCAT('DM-', CAST(DemandNoteID AS VARCHAR(30)))
+            ELSE DemandID
+          END,
+          TransactionID = CASE
+            WHEN TransactionID IS NULL OR LTRIM(RTRIM(TransactionID)) = '' THEN CONCAT('TS-', CAST(DemandNoteID AS VARCHAR(30)))
+            ELSE TransactionID
+          END
+        WHERE DemandID IS NULL
+          OR LTRIM(RTRIM(DemandID)) = ''
+          OR TransactionID IS NULL
+          OR LTRIM(RTRIM(TransactionID)) = '';
       `);
       await fs.mkdir(DEMAND_NOTES_DIR, { recursive: true });
     })();

@@ -13,19 +13,19 @@ export function registerDataRoutes(app, deps) {
       idColumn: "LeaseID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.LeaseData",
-      visibleColumns: ["LeaseID", "Area__in_S"],
+      visibleColumns: ["LeaseID", "LandID", "Area__in_S"],
     },
     market: {
       idColumn: "MarketID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.MarketData",
-      visibleColumns: ["MarketID", "Refname"],
+      visibleColumns: ["MarketID", "Refname", "TotalRate"],
     },
     license: {
       idColumn: "LicenseID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.LicenseData",
-      visibleColumns: [ "AREA_ALLOT"],
+      visibleColumns: [  "LicenseID", "LandID", "AREA_ALLOT"],
     },
   };
 
@@ -84,7 +84,7 @@ export function registerDataRoutes(app, deps) {
           ld.DateTo,
           ld.DateTo AS LeaseEndDate,
           COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS LandName,
-          COALESCE(c.CategoryName, CAST('' AS VARCHAR(100))) AS LandType
+          COALESCE(l.LandType, CAST('' AS VARCHAR(100))) AS LandType
         FROM dbo.Lessees l
         LEFT JOIN dbo.Categories c ON c.CategoryID = l.CategoryID
         LEFT JOIN dbo.LeaseDetails ld ON ld.LesseeID = l.LesseeID
@@ -105,7 +105,7 @@ export function registerDataRoutes(app, deps) {
       const result = await p.request().query(`
         SELECT
           [${config.objectIdColumn}] AS OBJECTID,
-          [${config.idColumn}] AS RowID,
+          [${config.objectIdColumn}] AS RowID,
           ${selectCols}
         FROM ${config.tableName}
         ORDER BY [${config.idColumn}]
@@ -136,7 +136,7 @@ export function registerDataRoutes(app, deps) {
       const updateResult = await request.query(`
         UPDATE ${config.tableName}
         SET ${setClause}
-        WHERE [${config.idColumn}] = @id;
+        WHERE [${config.objectIdColumn}] = @id;
         SELECT @@ROWCOUNT AS affected;
       `);
 
@@ -152,10 +152,10 @@ export function registerDataRoutes(app, deps) {
         .query(`
           SELECT
             [${config.objectIdColumn}] AS OBJECTID,
-            [${config.idColumn}] AS RowID,
+            [${config.objectIdColumn}] AS RowID,
             ${selectCols}
           FROM ${config.tableName}
-          WHERE [${config.idColumn}] = @id
+          WHERE [${config.objectIdColumn}] = @id
         `);
 
       res.json(updated.recordset?.[0] || null);
@@ -195,12 +195,13 @@ export function registerDataRoutes(app, deps) {
   //   }
   // });
 
-  app.get("/api/EoiTable", authenticateToken, authorizeRoles("Manager", "Admin"), async (req, res) => {
+  app.get("/api/EoiTable", authenticateToken, authorizeRoles("User","Manager", "Admin"), async (req, res) => {
     try {
       await ensureEoiInfrastructure();
       const p = await getPool();
       const result = await p.request().query(`
         SELECT
+          COALESCE(ld.LandID, md.LandID, licd.LandID) AS LandID,
           e.EOIID,
           e.EOIConsumerName,
           e.EOILandType,
@@ -208,6 +209,15 @@ export function registerDataRoutes(app, deps) {
           e.EOIAppliedDate,
           e.EOIStatus
         FROM dbo.EoiRequests e
+        LEFT JOIN dbo.LeaseData ld
+          ON e.EOILandType = 'lease'
+          AND ld.OBJECTID = e.ObjectID
+        LEFT JOIN dbo.MarketData md
+          ON e.EOILandType = 'market'
+          AND md.OBJECTID = e.ObjectID
+        LEFT JOIN dbo.LicenseData licd
+          ON e.EOILandType = 'license'
+          AND licd.OBJECTID = e.ObjectID
         ORDER BY e.EOIID DESC
       `);
       res.json(result.recordset);
@@ -467,14 +477,16 @@ export function registerDataRoutes(app, deps) {
               ld.LeaseID,
               ld.AreaDivision,
               ld.TotalArea,
-              ld.PaymentStatus,
-              ld.PaymentStatus AS PaymentStatusCode,
+              COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatus,
+              COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatusCode,
               ld.DateFrom,
               ld.DateTo,
               COALESCE(dn.DueDate, ld.DateTo) AS LeaseEndDate,
               COALESCE(dn.LandType, c.CategoryName, CAST('' AS VARCHAR(100))) AS LandType,
               COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS LandName,
               dn.Amount AS OutstandingDue,
+              dn.DemandID,
+              dn.TransactionID,
               dn.DemandNoteID,
               dn.Status AS DemandNoteStatus,
               dn.DocumentFileName,
@@ -489,8 +501,11 @@ export function registerDataRoutes(app, deps) {
               SELECT TOP 1
                 d.DemandNoteID,
                 d.Amount,
+                d.DemandID,
+                d.TransactionID,
                 d.DueDate,
                 d.Status,
+                d.PaymentStatus,
                 d.DocumentFileName,
                 d.LandType
               FROM dbo.DemandNotes d
@@ -513,17 +528,20 @@ export function registerDataRoutes(app, deps) {
             l.ContactNo,
             l.Address,
             l.EmailID,
+            l.LandType,
             ld.LeaseID,
             ld.AreaDivision,
             ld.TotalArea,
-            ld.PaymentStatus,
-            ld.PaymentStatus AS PaymentStatusCode,
+            COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatus,
+            COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatusCode,
             ld.DateFrom,
             ld.DateTo,
             COALESCE(dn.DueDate, ld.DateTo) AS LeaseEndDate,
             COALESCE(dn.LandType, c.CategoryName, CAST('' AS VARCHAR(100))) AS LandType,
             COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS LandName,
             dn.Amount AS OutstandingDue,
+            dn.DemandID,
+            dn.TransactionID,
             dn.DemandNoteID,
             dn.Status AS DemandNoteStatus,
             dn.DocumentFileName,
@@ -538,8 +556,11 @@ export function registerDataRoutes(app, deps) {
             SELECT TOP 1
               d.DemandNoteID,
               d.Amount,
+              d.DemandID,
+              d.TransactionID,
               d.DueDate,
               d.Status,
+              d.PaymentStatus,
               d.DocumentFileName,
               d.LandType
             FROM dbo.DemandNotes d
@@ -585,17 +606,20 @@ export function registerDataRoutes(app, deps) {
             l.ContactNo,
             l.Address,
             l.EmailID,
+            l.LandType,
             ld.LeaseID,
             ld.AreaDivision,
             ld.TotalArea,
-            ld.PaymentStatus,
-            ld.PaymentStatus AS PaymentStatusCode,
+            COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatus,
+            COALESCE(dn.PaymentStatus, ld.PaymentStatus) AS PaymentStatusCode,
             ld.DateFrom,
             ld.DateTo,
             COALESCE(dn.DueDate, ld.DateTo) AS LeaseEndDate,
             COALESCE(dn.LandType, c.CategoryName, CAST('' AS VARCHAR(100))) AS LandType,
             COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS LandName,
             dn.Amount AS OutstandingDue,
+            dn.DemandID,
+            dn.TransactionID,
             dn.DemandNoteID,
             dn.Status AS DemandNoteStatus,
             dn.DocumentFileName,
@@ -610,8 +634,11 @@ export function registerDataRoutes(app, deps) {
             SELECT TOP 1
               d.DemandNoteID,
               d.Amount,
+              d.DemandID,
+              d.TransactionID,
               d.DueDate,
               d.Status,
+              d.PaymentStatus,
               d.DocumentFileName,
               d.LandType
             FROM dbo.DemandNotes d
