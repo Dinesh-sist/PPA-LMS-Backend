@@ -19,7 +19,7 @@ export function registerDataRoutes(app, deps) {
       idColumn: "MarketID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.MarketData",
-      visibleColumns: ["MarketID", "Refname", "TotalRate"],
+      visibleColumns: ["MarketID", "LandId", "Refname", "TotalRate"],
     },
     license: {
       idColumn: "LicenseID",
