@@ -18,7 +18,6 @@ import { registerAuthRoutes } from "./routes/authRoutes.js";
 import { registerDemandRoutes } from "./routes/demandRoutes.js";
 import { registerDataRoutes } from "./routes/dataRoutes.js";
 
-
 import paymentRoutes from "./routes/payments.route.js";
 
 const app = express();
@@ -27,11 +26,16 @@ app.use(express.json());
 
 app.use("/api/payments", paymentRoutes);
 
-
-
-const DEMAND_TEMPLATE_PATH = path.join(__dirname, "PPA_Lease_Renewal_Template.docx");
+const DEMAND_TEMPLATE_PATH = path.join(
+  __dirname,
+  "PPA_Lease_Renewal_Template.docx",
+);
 const DEMAND_NOTES_DIR = path.join(__dirname, "generated-demand-notes");
-const DEMAND_TEMPLATE_RENDER_SCRIPT = path.join(__dirname, "scripts", "render-demand-note.ps1");
+const DEMAND_TEMPLATE_RENDER_SCRIPT = path.join(
+  __dirname,
+  "scripts",
+  "render-demand-note.ps1",
+);
 
 const JWT_SECRET = process.env.JWT_SECRET || "";
 const JWT_ISSUER = process.env.JWT_ISSUER || "ppa-lms-api";
@@ -39,22 +43,28 @@ const ACCESS_TOKEN_TTL = process.env.JWT_ACCESS_TTL || "8h";
 const ACCESS_TOKEN_REMEMBER_TTL = process.env.JWT_ACCESS_TTL_REMEMBER || "7d";
 const ALLOWED_ROLES = new Set(["User", "Manager", "Admin"]);
 const MAX_FAILED_ATTEMPTS = Number(process.env.AUTH_MAX_FAILED_ATTEMPTS || 5);
-const BLOCK_WINDOW_MS = Number(process.env.AUTH_BLOCK_WINDOW_MS || 15 * 60 * 1000);
-const BLOCK_DURATION_MS = Number(process.env.AUTH_BLOCK_DURATION_MS || 15 * 60 * 1000);
+const BLOCK_WINDOW_MS = Number(
+  process.env.AUTH_BLOCK_WINDOW_MS || 15 * 60 * 1000,
+);
+const BLOCK_DURATION_MS = Number(
+  process.env.AUTH_BLOCK_DURATION_MS || 15 * 60 * 1000,
+);
 
 if (!JWT_SECRET) {
-  console.warn("Warning: JWT_SECRET is not set. Set JWT_SECRET in .env before using authentication in production.");
+  console.warn(
+    "Warning: JWT_SECRET is not set. Set JWT_SECRET in .env before using authentication in production.",
+  );
 }
 
 const dbConfig = {
-  user: "lms",
-  password: "lms@123",
-  server: "localhost",
-  database: "PPALMSDataBase",
+  user: "sa",
+  password: "Gklg2401",
+  server: "GOKUL",
+  database: "LeaseMgmtDB",
   port: 1433,
   options: {
-    trustServerCertificate: true
-  }
+    trustServerCertificate: true,
+  },
 };
 
 let pool;
@@ -66,7 +76,9 @@ async function getPool() {
 const loginAttemptState = new Map();
 
 function normalizeUsername(value) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 async function resolveLesseeByUsername(p, username) {
@@ -75,8 +87,7 @@ async function resolveLesseeByUsername(p, username) {
 
   const result = await p
     .request()
-    .input("usernameNormalized", sql.NVarChar(320), usernameNormalized)
-    .query(`
+    .input("usernameNormalized", sql.NVarChar(320), usernameNormalized).query(`
       SELECT TOP 1
         l.LesseeID,
         l.LesseeName,
@@ -195,12 +206,19 @@ async function ensureDemandNoteInfrastructure() {
   return demandInfraPromise;
 }
 
-async function renderDemandNoteDocument({ demandNoteId, fields, fileNameBase }) {
+async function renderDemandNoteDocument({
+  demandNoteId,
+  fields,
+  fileNameBase,
+}) {
   await fs.mkdir(DEMAND_NOTES_DIR, { recursive: true });
   const safeBase = sanitizeFileNamePart(fileNameBase);
   const outputFileName = `${safeBase}.docx`;
   const outputPath = path.join(DEMAND_NOTES_DIR, outputFileName);
-  const dataPath = path.join(DEMAND_NOTES_DIR, `DemandNote_${demandNoteId}.json`);
+  const dataPath = path.join(
+    DEMAND_NOTES_DIR,
+    `DemandNote_${demandNoteId}.json`,
+  );
   await fs.writeFile(dataPath, JSON.stringify(fields), "utf8");
   try {
     await execFile("powershell", [
@@ -253,29 +271,47 @@ async function renderDemandNotePreviewHtml({ fields, fileNameBase }) {
   }
 }
 
-function hashPassword(plainPassword, saltHex = crypto.randomBytes(16).toString("hex")) {
+function hashPassword(
+  plainPassword,
+  saltHex = crypto.randomBytes(16).toString("hex"),
+) {
   const N = 16384;
   const r = 8;
   const p = 1;
   const keyLen = 64;
-  const derived = crypto.scryptSync(plainPassword, Buffer.from(saltHex, "hex"), keyLen, {
-    N,
-    r,
-    p,
-    maxmem: 64 * 1024 * 1024,
-  });
+  const derived = crypto.scryptSync(
+    plainPassword,
+    Buffer.from(saltHex, "hex"),
+    keyLen,
+    {
+      N,
+      r,
+      p,
+      maxmem: 64 * 1024 * 1024,
+    },
+  );
   return `scrypt$${N}$${r}$${p}$${saltHex}$${derived.toString("hex")}`;
 }
 
 function verifyPassword(plainPassword, storedHash) {
   if (!storedHash || typeof storedHash !== "string") return false;
-  const [algo, nValue, rValue, pValue, saltHex, hashHex] = storedHash.split("$");
-  if (algo !== "scrypt" || !nValue || !rValue || !pValue || !saltHex || !hashHex) return false;
+  const [algo, nValue, rValue, pValue, saltHex, hashHex] =
+    storedHash.split("$");
+  if (
+    algo !== "scrypt" ||
+    !nValue ||
+    !rValue ||
+    !pValue ||
+    !saltHex ||
+    !hashHex
+  )
+    return false;
 
   const N = Number(nValue);
   const r = Number(rValue);
   const p = Number(pValue);
-  if (!Number.isFinite(N) || !Number.isFinite(r) || !Number.isFinite(p)) return false;
+  if (!Number.isFinite(N) || !Number.isFinite(r) || !Number.isFinite(p))
+    return false;
 
   const derived = crypto.scryptSync(
     plainPassword,
@@ -286,7 +322,7 @@ function verifyPassword(plainPassword, storedHash) {
       r,
       p,
       maxmem: 64 * 1024 * 1024,
-    }
+    },
   );
 
   return crypto.timingSafeEqual(derived, Buffer.from(hashHex, "hex"));
@@ -305,7 +341,8 @@ function issueAccessToken(user, rememberMe = false) {
 }
 
 function getAttemptKey(req, usernameNormalized) {
-  const ip = req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown";
+  const ip =
+    req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown";
   return `${usernameNormalized}:${ip}`;
 }
 
@@ -317,13 +354,22 @@ function registerFailedAttempt(key) {
   const now = Date.now();
   const current = loginAttemptState.get(key);
   if (!current || now - current.firstAttemptAt > BLOCK_WINDOW_MS) {
-    loginAttemptState.set(key, { count: 1, firstAttemptAt: now, blockedUntil: null });
+    loginAttemptState.set(key, {
+      count: 1,
+      firstAttemptAt: now,
+      blockedUntil: null,
+    });
     return;
   }
 
   const nextCount = current.count + 1;
-  const blockedUntil = nextCount >= MAX_FAILED_ATTEMPTS ? now + BLOCK_DURATION_MS : null;
-  loginAttemptState.set(key, { count: nextCount, firstAttemptAt: current.firstAttemptAt, blockedUntil });
+  const blockedUntil =
+    nextCount >= MAX_FAILED_ATTEMPTS ? now + BLOCK_DURATION_MS : null;
+  loginAttemptState.set(key, {
+    count: nextCount,
+    firstAttemptAt: current.firstAttemptAt,
+    blockedUntil,
+  });
 }
 
 function clearFailedAttempts(key) {
@@ -349,8 +395,7 @@ async function recordAuthEvent({
       .input("status", sql.NVarChar(20), status)
       .input("reason", sql.NVarChar(300), reason)
       .input("ipAddress", sql.NVarChar(60), ipAddress)
-      .input("userAgent", sql.NVarChar(300), userAgent)
-      .query(`
+      .input("userAgent", sql.NVarChar(300), userAgent).query(`
         INSERT INTO dbo.AuthAuditLogs
           (UserID, UsernameAttempt, ActionType, Status, Reason, IPAddress, UserAgent)
         VALUES
@@ -365,7 +410,9 @@ function authenticateToken(req, res, next) {
   const authHeader = req.headers.authorization || "";
   const [scheme, token] = authHeader.split(" ");
   if (scheme !== "Bearer" || !token) {
-    return res.status(401).json({ error: "Missing or invalid authorization token" });
+    return res
+      .status(401)
+      .json({ error: "Missing or invalid authorization token" });
   }
 
   try {
