@@ -1,4 +1,5 @@
 export function registerDataRoutes(app, deps) {
+
   const {
     sql,
     getPool,
@@ -56,6 +57,8 @@ export function registerDataRoutes(app, deps) {
     }
     return eoiInfraPromise;
   }
+
+  
 
   function getLandConfig(typeValue) {
     const rawType = String(typeValue || "lease").trim().toLowerCase();

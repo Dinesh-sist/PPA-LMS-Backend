@@ -6,6 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 dotenv.config();
+console.log("SMTP_USER:", process.env.SMTP_USER); // remove after testing
+console.log("SMTP_PASS length:", process.env.SMTP_PASS?.length); // remove after testing
 import express from "express";
 import sql from "mssql";
 import cors from "cors";
@@ -57,10 +59,10 @@ if (!JWT_SECRET) {
 }
 
 const dbConfig = {
-  user: "sa",
-  password: "Gklg2401",
-  server: "GOKUL",
-  database: "LeaseMgmtDB",
+  user: "lms",
+  password: "lms@123",
+  server: "localhost",
+  database: "PPALMSDataBase",
   port: 1433,
   options: {
     trustServerCertificate: true,
