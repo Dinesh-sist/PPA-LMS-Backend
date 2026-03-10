@@ -12,14 +12,21 @@ export function registerDemandRoutes(app, deps) {
     sanitizeFileNamePart,
   } = deps;
 
+  function normalizeLeaseId(value) {
+    if (value === null || value === undefined) return null;
+    const leaseId = String(value).trim();
+    if (!leaseId) return null;
+    return leaseId.length <= 20 ? leaseId : null;
+  }
+
   async function resolveDemandBaseRecord({ lesseeId, leaseId }) {
     const p = await getPool();
     const baseResult = await p
       .request()
       .input("lesseeId", sql.Int, lesseeId)
-      .input("leaseId", sql.Int, leaseId)
+      .input("leaseId", sql.NVarChar(20), leaseId)
       .query(`
-        SELECT TOP 1
+        SELECT
           l.LesseeID,
           l.LesseeName,
           l.Address,
@@ -32,10 +39,9 @@ export function registerDemandRoutes(app, deps) {
           ld.DateTo
         FROM dbo.Lessees l
         LEFT JOIN dbo.Categories c ON c.CategoryID = l.CategoryID
-        LEFT JOIN dbo.LeaseDetails ld ON ld.LesseeID = l.LesseeID
+        INNER JOIN dbo.LeaseDetails ld ON ld.LesseeID = l.LesseeID
         WHERE l.LesseeID = @lesseeId
-          AND (@leaseId IS NULL OR ld.LeaseID = @leaseId)
-        ORDER BY CASE WHEN @leaseId IS NULL THEN ISNULL(ld.LeaseID, 2147483647) ELSE 0 END
+          AND CONVERT(VARCHAR(20), ld.LeaseID) = @leaseId
       `);
     return { p, base: baseResult.recordset[0] };
   }
@@ -94,11 +100,16 @@ export function registerDemandRoutes(app, deps) {
           COALESCE(d.LandType, c.CategoryName, CAST('' AS VARCHAR(100))) AS type,
           COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS land,
           CASE
-            WHEN ld.DateFrom IS NOT NULL OR ld.DateTo IS NOT NULL
-              THEN CONCAT(CONVERT(VARCHAR(10), ld.DateFrom, 23), ' to ', CONVERT(VARCHAR(10), ld.DateTo, 23))
+            WHEN ld.DateFrom IS NOT NULL
+              OR ld.DateTo IS NOT NULL
+              THEN CONCAT(
+                CONVERT(VARCHAR(10), ld.DateFrom, 23),
+                ' to ',
+                CONVERT(VARCHAR(10), ld.DateTo, 23)
+              )
             ELSE ''
           END AS leaseTenure,
-          COALESCE(d.DueDate, ld.DateTo) AS dueDate,
+          d.DueDate AS dueDate,
           d.GeneratedAt AS demandGenerationDate,
           d.Status AS DemandStatus,
           d.PaymentStatus,
@@ -110,7 +121,7 @@ export function registerDemandRoutes(app, deps) {
         FROM dbo.DemandNotes d
         INNER JOIN dbo.Lessees l ON l.LesseeID = d.LesseeID
         LEFT JOIN dbo.Categories c ON c.CategoryID = l.CategoryID
-        LEFT JOIN dbo.LeaseDetails ld ON ld.LeaseID = d.LeaseID
+        LEFT JOIN dbo.LeaseDetails ld ON CONVERT(VARCHAR(20), ld.LeaseID) = CONVERT(VARCHAR(20), d.LeaseID)
         ORDER BY d.GeneratedAt DESC, d.DemandNoteID DESC
       `);
       res.json(result.recordset);
@@ -125,7 +136,7 @@ export function registerDemandRoutes(app, deps) {
       await ensureDemandNoteInfrastructure();
       const p = await getPool();
       const lesseeId = Number(req.body?.lesseeId);
-      const leaseId = req.body?.leaseId === null || req.body?.leaseId === undefined ? null : Number(req.body.leaseId);
+      const leaseId = normalizeLeaseId(req.body?.leaseId);
       const dueDate = req.body?.dueDate ? String(req.body.dueDate) : null;
       const amountRaw = req.body?.amount;
       const amount = amountRaw === null || amountRaw === undefined || String(amountRaw).trim() === "" ? null : Number(amountRaw);
@@ -135,8 +146,8 @@ export function registerDemandRoutes(app, deps) {
       if (!Number.isInteger(lesseeId) || lesseeId <= 0) {
         return res.status(400).json({ error: "Valid lesseeId is required" });
       }
-      if (leaseId !== null && (!Number.isInteger(leaseId) || leaseId <= 0)) {
-        return res.status(400).json({ error: "leaseId must be null or a positive integer" });
+      if (leaseId === null) {
+        return res.status(400).json({ error: "leaseId is required and must be a non-empty string up to 20 characters" });
       }
       if (amount !== null && !Number.isFinite(amount)) {
         return res.status(400).json({ error: "Amount must be numeric" });
@@ -150,7 +161,7 @@ export function registerDemandRoutes(app, deps) {
       const insertResult = await p
         .request()
         .input("lesseeId", sql.Int, lesseeId)
-        .input("leaseId", sql.Int, base.LeaseID || null)
+        .input("leaseId", sql.NVarChar(20), normalizeLeaseId(base.LeaseID))
         .input("generatedByUserId", sql.Int, req.user.userId)
         .input("dueDate", sql.Date, dueDate)
         .input("amount", sql.Decimal(18, 2), amount)
@@ -222,7 +233,7 @@ export function registerDemandRoutes(app, deps) {
     try {
       await ensureDemandNoteInfrastructure();
       const lesseeId = Number(req.body?.lesseeId);
-      const leaseId = req.body?.leaseId === null || req.body?.leaseId === undefined ? null : Number(req.body.leaseId);
+      const leaseId = normalizeLeaseId(req.body?.leaseId);
       const dueDate = req.body?.dueDate ? String(req.body.dueDate) : null;
       const amountRaw = req.body?.amount;
       const amount = amountRaw === null || amountRaw === undefined || String(amountRaw).trim() === "" ? null : Number(amountRaw);
@@ -232,8 +243,8 @@ export function registerDemandRoutes(app, deps) {
       if (!Number.isInteger(lesseeId) || lesseeId <= 0) {
         return res.status(400).json({ error: "Valid lesseeId is required" });
       }
-      if (leaseId !== null && (!Number.isInteger(leaseId) || leaseId <= 0)) {
-        return res.status(400).json({ error: "leaseId must be null or a positive integer" });
+      if (leaseId === null) {
+        return res.status(400).json({ error: "leaseId is required and must be a non-empty string up to 20 characters" });
       }
       if (amount !== null && !Number.isFinite(amount)) {
         return res.status(400).json({ error: "Amount must be numeric" });
@@ -383,7 +394,7 @@ export function registerDemandRoutes(app, deps) {
           UPDATE ld
           SET ld.PaymentStatus = 'Paid'
           FROM dbo.LeaseDetails ld
-          INNER JOIN dbo.DemandNotes d ON d.LeaseID = ld.LeaseID
+          INNER JOIN dbo.DemandNotes d ON CONVERT(VARCHAR(20), d.LeaseID) = CONVERT(VARCHAR(20), ld.LeaseID)
           WHERE d.DemandNoteID = @demandNoteId
             AND (@lesseeId IS NULL OR d.LesseeID = @lesseeId)
         `);
@@ -436,7 +447,10 @@ export function registerDemandRoutes(app, deps) {
       } catch {
         return res.status(404).json({ error: "Demand note file not found on server" });
       }
-      const dynamicName = `${sanitizeFileNamePart(row.LesseeName)}_DemandNote_${row.DemandNoteID}.docx`;
+      const sourceName = String(row.DocumentFileName || row.DocumentPath || "");
+      const extMatch = sourceName.match(/\.[a-z0-9]+$/i);
+      const ext = extMatch ? extMatch[0] : ".pdf";
+      const dynamicName = `${sanitizeFileNamePart(row.LesseeName)}_Demand_note_${row.DemandNoteID}${ext}`;
       return res.download(row.DocumentPath, dynamicName);
     } catch (err) {
       console.error(err);
