@@ -485,7 +485,7 @@ export function registerDataRoutes(app, deps) {
               ld.DateFrom,
               ld.DateTo,
               COALESCE(dn.DueDate, ld.DateTo) AS LeaseEndDate,
-              COALESCE(dn.LandType, c.CategoryName, CAST('' AS VARCHAR(100))) AS LandType,
+              COALESCE(dn.LandType, CAST('lease' AS VARCHAR(100))) AS LandType,
               COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS LandName,
               dn.Amount AS OutstandingDue,
               dn.DemandID,
@@ -514,7 +514,11 @@ export function registerDataRoutes(app, deps) {
               FROM dbo.DemandNotes d
               WHERE d.LesseeID = l.LesseeID
                 AND d.Status = 'Issued'
-                AND (ld.LeaseID IS NULL OR d.LeaseID IS NULL OR d.LeaseID = ld.LeaseID)
+                AND (
+                  ld.LeaseID IS NULL
+                  OR d.LeaseID IS NULL
+                  OR CONVERT(VARCHAR(20), d.LeaseID) = CONVERT(VARCHAR(20), ld.LeaseID)
+                )
               ORDER BY d.IssuedAt DESC, d.GeneratedAt DESC, d.DemandNoteID DESC
             ) dn
             WHERE l.LesseeID = @lesseeId
@@ -540,7 +544,7 @@ export function registerDataRoutes(app, deps) {
             ld.DateFrom,
             ld.DateTo,
             COALESCE(dn.DueDate, ld.DateTo) AS LeaseEndDate,
-            COALESCE(dn.LandType, c.CategoryName, CAST('' AS VARCHAR(100))) AS LandType,
+            COALESCE(dn.LandType, CAST('lease' AS VARCHAR(100))) AS LandType,
             COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS LandName,
             dn.Amount AS OutstandingDue,
             dn.DemandID,
@@ -569,7 +573,11 @@ export function registerDataRoutes(app, deps) {
             FROM dbo.DemandNotes d
             WHERE d.LesseeID = l.LesseeID
               AND d.Status = 'Issued'
-              AND (ld.LeaseID IS NULL OR d.LeaseID IS NULL OR d.LeaseID = ld.LeaseID)
+              AND (
+                ld.LeaseID IS NULL
+                OR d.LeaseID IS NULL
+                OR CONVERT(VARCHAR(20), d.LeaseID) = CONVERT(VARCHAR(20), ld.LeaseID)
+              )
             ORDER BY d.IssuedAt DESC, d.GeneratedAt DESC, d.DemandNoteID DESC
           ) dn
           ORDER BY l.LesseeID, ld.LeaseID
@@ -618,7 +626,7 @@ export function registerDataRoutes(app, deps) {
             ld.DateFrom,
             ld.DateTo,
             COALESCE(dn.DueDate, ld.DateTo) AS LeaseEndDate,
-            COALESCE(dn.LandType, c.CategoryName, CAST('' AS VARCHAR(100))) AS LandType,
+            COALESCE(dn.LandType, CAST('lease' AS VARCHAR(100))) AS LandType,
             COALESCE(CAST(ld.TotalArea AS VARCHAR(200)), CAST('' AS VARCHAR(200))) AS LandName,
             dn.Amount AS OutstandingDue,
             dn.DemandID,
@@ -647,7 +655,11 @@ export function registerDataRoutes(app, deps) {
             FROM dbo.DemandNotes d
             WHERE d.LesseeID = l.LesseeID
               AND d.Status = 'Issued'
-              AND (ld.LeaseID IS NULL OR d.LeaseID IS NULL OR d.LeaseID = ld.LeaseID)
+              AND (
+                ld.LeaseID IS NULL
+                OR d.LeaseID IS NULL
+                OR CONVERT(VARCHAR(20), d.LeaseID) = CONVERT(VARCHAR(20), ld.LeaseID)
+              )
             ORDER BY d.IssuedAt DESC, d.GeneratedAt DESC, d.DemandNoteID DESC
           ) dn
           WHERE l.LesseeID = @userId

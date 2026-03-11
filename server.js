@@ -23,7 +23,7 @@ import { registerDataRoutes } from "./routes/dataRoutes.js";
 import paymentRoutes from "./routes/payments.route.js";
 
 const app = express();
-app.use(cors());
+app.use(cors({ exposedHeaders: ["Content-Disposition"] }));
 app.use(express.json());
 
 app.use("/api/payments", paymentRoutes);
@@ -33,6 +33,8 @@ const DEMAND_TEMPLATE_PATH = path.join(
   "PPA_Lease_Renewal_Template.docx",
 );
 const DEMAND_NOTES_DIR = path.join(__dirname, "generated-demand-notes");
+// const DEMAND_TEMPLATE_RENDER_SCRIPT = path.join(__dirname, "scripts", "render-demand-note.ps1");
+const DEMAND_DOCX_TO_PDF_SCRIPT = path.join(__dirname, "scripts", "convert-docx-to-pdf.ps1");
 const DEMAND_TEMPLATE_RENDER_SCRIPT = path.join(
   __dirname,
   "scripts",
@@ -59,10 +61,10 @@ if (!JWT_SECRET) {
 }
 
 const dbConfig = {
-  user: "lms",
-  password: "lms@123",
+  user: "lmslog",
+  password: "lmslog@123",
   server: "localhost",
-  database: "PPALMSDataBase",
+  database: "LeaseManagementDB",
   port: 1433,
   options: {
     trustServerCertificate: true,
@@ -141,7 +143,7 @@ async function ensureDemandNoteInfrastructure() {
             DemandID NVARCHAR(50) NULL,
             TransactionID NVARCHAR(50) NULL,
             LesseeID INT NOT NULL,
-            LeaseID INT NULL,
+            LeaseID VARCHAR(20) NULL,
             GeneratedByUserID INT NOT NULL,
             GeneratedAt DATETIME2 NOT NULL CONSTRAINT DF_DemandNotes_GeneratedAt DEFAULT SYSUTCDATETIME(),
             DueDate DATE NULL,
@@ -158,11 +160,31 @@ async function ensureDemandNoteInfrastructure() {
             RejectedAt DATETIME2 NULL,
             AdminRemarks NVARCHAR(500) NULL,
             CONSTRAINT FK_DemandNotes_Lessees FOREIGN KEY (LesseeID) REFERENCES dbo.Lessees(LesseeID),
-            CONSTRAINT FK_DemandNotes_LeaseDetails FOREIGN KEY (LeaseID) REFERENCES dbo.LeaseDetails(LeaseID),
             CONSTRAINT FK_DemandNotes_GeneratedBy FOREIGN KEY (GeneratedByUserID) REFERENCES dbo.Users(UserID),
             CONSTRAINT FK_DemandNotes_IssuedBy FOREIGN KEY (IssuedByUserID) REFERENCES dbo.Users(UserID),
             CONSTRAINT FK_DemandNotes_RejectedBy FOREIGN KEY (RejectedByUserID) REFERENCES dbo.Users(UserID)
           );
+        END
+
+        IF COL_LENGTH('dbo.DemandNotes', 'LeaseID') IS NOT NULL
+          AND TYPE_NAME(
+            (SELECT c.system_type_id
+             FROM sys.columns c
+             WHERE c.object_id = OBJECT_ID('dbo.DemandNotes')
+               AND c.name = 'LeaseID')
+          ) <> 'varchar'
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM sys.foreign_keys
+            WHERE name = 'FK_DemandNotes_LeaseDetails'
+              AND parent_object_id = OBJECT_ID('dbo.DemandNotes')
+          )
+          BEGIN
+            ALTER TABLE dbo.DemandNotes DROP CONSTRAINT FK_DemandNotes_LeaseDetails;
+          END
+
+          ALTER TABLE dbo.DemandNotes ALTER COLUMN LeaseID VARCHAR(20) NULL;
         END
 
         IF COL_LENGTH('dbo.DemandNotes', 'LandType') IS NULL
@@ -215,13 +237,16 @@ async function renderDemandNoteDocument({
 }) {
   await fs.mkdir(DEMAND_NOTES_DIR, { recursive: true });
   const safeBase = sanitizeFileNamePart(fileNameBase);
-  const outputFileName = `${safeBase}.docx`;
+  const outputFileName = `${safeBase}.pdf`;
   const outputPath = path.join(DEMAND_NOTES_DIR, outputFileName);
-  const dataPath = path.join(
-    DEMAND_NOTES_DIR,
-    `DemandNote_${demandNoteId}.json`,
-  );
+  const docxPath = path.join(DEMAND_NOTES_DIR, `${safeBase}.docx`);
+  const dataPath = path.join(DEMAND_NOTES_DIR, `DemandNote_${demandNoteId}.json`);
+  // const dataPath = path.join(
+  //   DEMAND_NOTES_DIR,
+  //   `DemandNote_${demandNoteId}.json`,
+  // );
   await fs.writeFile(dataPath, JSON.stringify(fields), "utf8");
+  let converted = false;
   try {
     await execFile("powershell", [
       "-NoProfile",
@@ -232,12 +257,31 @@ async function renderDemandNoteDocument({
       "-TemplatePath",
       DEMAND_TEMPLATE_PATH,
       "-OutputPath",
-      outputPath,
+      docxPath,
       "-DataPath",
       dataPath,
     ]);
+    await execFile("powershell", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      DEMAND_DOCX_TO_PDF_SCRIPT,
+      "-InputPath",
+      docxPath,
+      "-OutputPath",
+      outputPath,
+    ]);
+    const pdfStat = await fs.stat(outputPath);
+    if (!pdfStat.isFile() || pdfStat.size === 0) {
+      throw new Error("Demand note PDF conversion produced an invalid file.");
+    }
+    converted = true;
   } finally {
     await fs.rm(dataPath, { force: true });
+    if (converted) {
+      await fs.rm(docxPath, { force: true });
+    }
   }
   return { outputPath, outputFileName };
 }

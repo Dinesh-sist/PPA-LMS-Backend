@@ -10,7 +10,11 @@ export async function sendDemandNoteApprovedEmail({ to, lesseeName, demandNoteId
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+    debug:true,
+    logger:true,
   });
+
+  await transporter.verify();
 
   // 1. Format variables first
   const dueDateFormatted = dueDate ? String(dueDate).slice(0, 10) : "N/A";
@@ -104,7 +108,7 @@ export async function sendDemandNoteApprovedEmail({ to, lesseeName, demandNoteId
 
   // 3. Send mail once with attachment
   await transporter.sendMail({
-    from: `"Paradip Port Authority" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+    from: `"Paradip Port Authority" <${process.env.SMTP_USER || process.env.SMTP_USER}>`,
     to,
     subject: `Demand Note Approved - Payment Due by ${dueDateFormatted} | DM-${demandNoteId}`,
     html,
