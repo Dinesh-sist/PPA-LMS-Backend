@@ -1,3 +1,5 @@
+import { sendDemandNoteApprovedEmail } from "../utils/Mailer.js";
+
 export function registerDemandRoutes(app, deps) {
   const {
     sql,
@@ -17,6 +19,12 @@ export function registerDemandRoutes(app, deps) {
     const leaseId = String(value).trim();
     if (!leaseId) return null;
     return leaseId.length <= 20 ? leaseId : null;
+  }
+
+  function normalizeLandType(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (raw === "lease" || raw === "market" || raw === "license") return raw;
+    return "lease";
   }
 
   async function resolveDemandBaseRecord({ lesseeId, leaseId }) {
@@ -46,26 +54,7 @@ export function registerDemandRoutes(app, deps) {
     return { p, base: baseResult.recordset[0] };
   }
 
-  async function resolveDemandFileUserName(base) {
-    const emailNormalized = String(base?.EmailID || "").trim().toLowerCase();
-    if (emailNormalized) {
-      try {
-        const p = await getPool();
-        const userResult = await p
-          .request()
-          .input("usernameNormalized", sql.NVarChar(120), emailNormalized)
-          .query(`
-            SELECT TOP 1 u.Username
-            FROM dbo.Users u
-            WHERE u.UsernameNormalized = @usernameNormalized
-          `);
-        const matchedUsername = userResult.recordset[0]?.Username;
-        if (matchedUsername) return String(matchedUsername).trim();
-      } catch {
-        // Fallback below if account lookup fails.
-      }
-      return emailNormalized;
-    }
+  function resolveDemandFileUserName(base) {
     return String(base?.LesseeName || "DemandNote").trim();
   }
 
@@ -141,7 +130,8 @@ export function registerDemandRoutes(app, deps) {
       const amountRaw = req.body?.amount;
       const amount = amountRaw === null || amountRaw === undefined || String(amountRaw).trim() === "" ? null : Number(amountRaw);
       const description = req.body?.description ? String(req.body.description).trim() : null;
-      const normalizedLandType = "lease";
+      const landTypeInput = req.body?.landType ? String(req.body.landType).trim() : null;
+      const normalizedLandType = normalizeLandType(landTypeInput);
 
       if (!Number.isInteger(lesseeId) || lesseeId <= 0) {
         return res.status(400).json({ error: "Valid lesseeId is required" });
@@ -155,7 +145,7 @@ export function registerDemandRoutes(app, deps) {
 
       const { base } = await resolveDemandBaseRecord({ lesseeId, leaseId });
       if (!base) {
-        return res.status(404).json({ error : "Lessee/lease record not found" });
+        return res.status(404).json({ error: "Lessee/lease record not found" });
       }
 
       const insertResult = await p
@@ -199,10 +189,10 @@ export function registerDemandRoutes(app, deps) {
         `);
 
       try {
-        const demandFileUserName = await resolveDemandFileUserName(base);
+        const demandFileUserName = resolveDemandFileUserName(base);
         const { outputPath, outputFileName } = await renderDemandNoteDocument({
           demandNoteId,
-          fileNameBase: `${demandFileUserName}_DemandNote_${demandNoteId}`,
+          fileNameBase: `${demandFileUserName}_Demand_note_${demandNoteId}`,
           fields: buildDemandFields({ base, dueDate, amount, description }),
         });
 
@@ -239,6 +229,7 @@ export function registerDemandRoutes(app, deps) {
       const amount = amountRaw === null || amountRaw === undefined || String(amountRaw).trim() === "" ? null : Number(amountRaw);
       const description = req.body?.description ? String(req.body.description).trim() : null;
       const landTypeInput = req.body?.landType ? String(req.body.landType).trim() : null;
+      void landTypeInput;
 
       if (!Number.isInteger(lesseeId) || lesseeId <= 0) {
         return res.status(400).json({ error: "Valid lesseeId is required" });
@@ -254,14 +245,12 @@ export function registerDemandRoutes(app, deps) {
       if (!base) {
         return res.status(404).json({ error: "Lessee/lease record not found" });
       }
-      const demandFileUserName = await resolveDemandFileUserName(base);
 
       const preview = await renderDemandNotePreviewHtml({
-        fileNameBase: `${demandFileUserName}_DemandNote_Preview`,
+        fileNameBase: `${resolveDemandFileUserName(base)}_Demand_note_Preview`,
         fields: buildDemandFields({ base, dueDate, amount, description }),
       });
-
-      return res.json({ html: preview.html || "" });
+      return res.json(preview);
     } catch (err) {
       console.error(err);
       return res.status(500).json({ error: "Demand note preview failed" });
@@ -277,6 +266,30 @@ export function registerDemandRoutes(app, deps) {
       }
 
       const p = await getPool();
+
+      const fetchResult = await p
+        .request()
+        .input("demandNoteId", sql.Int, demandNoteId)
+        .query(`
+          SELECT
+            d.DemandNoteID,
+            d.DueDate,
+            d.Amount,
+            d.Status,
+            d.DocumentPath,
+            d.DocumentFileName,
+            l.LesseeName,
+            l.EmailID
+          FROM dbo.DemandNotes d
+          INNER JOIN dbo.Lessees l ON l.LesseeID = d.LesseeID
+          WHERE d.DemandNoteID = @demandNoteId
+        `);
+
+      const noteRow = fetchResult.recordset[0];
+      if (!noteRow) {
+        return res.status(404).json({ error: "Demand note not found" });
+      }
+
       const result = await p
         .request()
         .input("demandNoteId", sql.Int, demandNoteId)
@@ -306,6 +319,19 @@ export function registerDemandRoutes(app, deps) {
       if ((result.rowsAffected?.[0] || 0) === 0) {
         return res.status(400).json({ error: "Demand note is not in Generated status" });
       }
+
+      if (noteRow.EmailID) {
+        sendDemandNoteApprovedEmail({
+          to: noteRow.EmailID,
+          lesseeName: noteRow.LesseeName,
+          demandNoteId,
+          dueDate: noteRow.DueDate,
+          amount: noteRow.Amount,
+          documentPath: noteRow.DocumentPath,
+          documentFileName: noteRow.DocumentFileName,
+        }).catch((err) => console.error("Email send failed:", err.message));
+      }
+
       return res.json({ success: true });
     } catch (err) {
       console.error(err);
@@ -447,6 +473,7 @@ export function registerDemandRoutes(app, deps) {
       } catch {
         return res.status(404).json({ error: "Demand note file not found on server" });
       }
+
       const sourceName = String(row.DocumentFileName || row.DocumentPath || "");
       const extMatch = sourceName.match(/\.[a-z0-9]+$/i);
       const ext = extMatch ? extMatch[0] : ".pdf";

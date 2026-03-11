@@ -17,7 +17,9 @@
     "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.11.0",
     "mssql": "^12.2.0",
+    "nodemailer": "^8.0.2",
     "razorpay": "^2.9.6",
-    "tedious": "^19.2.1"
+    "tedious": "^19.2.1",
+    "wellknown": "^0.5.0"
   }
 }

@@ -1,4 +1,5 @@
 export function registerDataRoutes(app, deps) {
+
   const {
     sql,
     getPool,
@@ -19,13 +20,13 @@ export function registerDataRoutes(app, deps) {
       idColumn: "MarketID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.MarketData",
-      visibleColumns: ["MarketID", "Refname", "TotalRate"],
+      visibleColumns: ["MarketID", "LandId", "Refname", "TotalRate"],
     },
     license: {
       idColumn: "LicenseID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.LicenseData",
-      visibleColumns: ["LicenseID", "AREA_ALLOT"],
+      visibleColumns: [  "LicenseID", "LandID", "AREA_ALLOT"],
     },
   };
 
@@ -56,6 +57,8 @@ export function registerDataRoutes(app, deps) {
     }
     return eoiInfraPromise;
   }
+
+  
 
   function getLandConfig(typeValue) {
     const rawType = String(typeValue || "lease").trim().toLowerCase();
