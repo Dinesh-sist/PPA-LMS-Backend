@@ -1,3 +1,59 @@
+import http from "node:http";
+import https from "node:https";
+import proj4 from "proj4";
+import wk from "wellknown";
+
+const utm45n = "+proj=utm +zone=45 +datum=WGS84 +units=m +no_defs";
+const wgs84 = "+proj=longlat +datum=WGS84 +no_defs";
+
+function transformCoordinates(coords) {
+  if (Array.isArray(coords[0])) {
+    coords.forEach(transformCoordinates);
+  } else {
+    const [lng, lat] = proj4(utm45n, wgs84, [coords[0], coords[1]]);
+    coords[0] = lng;
+    coords[1] = lat;
+  }
+}
+
+function requestJson(urlString, { rejectUnauthorized = true } = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlString);
+    const isHttps = url.protocol === "https:";
+    const lib = isHttps ? https : http;
+
+    const req = lib.request(
+      {
+        method: "GET",
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: `${url.pathname}${url.search}`,
+        headers: { accept: "application/json" },
+        rejectUnauthorized: isHttps ? rejectUnauthorized : undefined,
+      },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          body += chunk;
+        });
+        res.on("end", () => {
+          const contentType = res.headers["content-type"] || "";
+          resolve({
+            status: res.statusCode || 0,
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            contentType,
+            body,
+          });
+        });
+      },
+    );
+
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 export function registerDataRoutes(app, deps) {
 
   const {
@@ -9,24 +65,33 @@ export function registerDataRoutes(app, deps) {
     ensureDemandNoteInfrastructure,
   } = deps;
 
+  const GEOSERVER_BASE_URL =
+    process.env.GEOSERVER_BASE_URL ||
+    "https://ppa-lms.in/geoserver/Paradip/wms";
+  const GEOSERVER_INSECURE_TLS =
+    String(process.env.GEOSERVER_INSECURE_TLS || "")
+      .trim()
+      .toLowerCase() === "true";
+  const ALLOWED_GEOSERVER_TYPES = new Set(["lease", "market", "license"]);
+
   const LAND_DATA_CONFIG = {
     lease: {
       idColumn: "LeaseID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.LeaseData",
-      visibleColumns: ["LeaseID", "LandID", "Area__in_S"],
+      visibleColumns: ["LeaseID", "LandID", "Area__in_S", "Shape"],
     },
     market: {
       idColumn: "MarketID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.MarketData",
-      visibleColumns: ["MarketID", "LandId", "Refname", "TotalRate"],
+      visibleColumns: ["MarketID", "LandId", "Refname", "TotalRate", "Shape"],
     },
     license: {
       idColumn: "LicenseID",
       objectIdColumn: "OBJECTID",
       tableName: "dbo.LicenseData",
-      visibleColumns: [  "LicenseID", "LandID", "AREA_ALLOT"],
+      visibleColumns: ["LicenseID", "LandID", "AREA_ALLOT", "Shape"],
     },
   };
 
@@ -58,12 +123,68 @@ export function registerDataRoutes(app, deps) {
     return eoiInfraPromise;
   }
 
-  
+
 
   function getLandConfig(typeValue) {
     const rawType = String(typeValue || "lease").trim().toLowerCase();
     return LAND_DATA_CONFIG[rawType] ? { type: rawType, ...LAND_DATA_CONFIG[rawType] } : { type: "lease", ...LAND_DATA_CONFIG.lease };
   }
+
+
+  app.get("/api/map/wkt", authenticateToken, authorizeRoles("User", "Manager", "Admin"), async (req, res) => {
+    try {
+      const typeRaw = String(req.query?.type || "").trim().toLowerCase();
+      const types = typeRaw
+        ? [typeRaw]
+        : ["lease", "market", "license"];
+
+      if (types.some((t) => !ALLOWED_GEOSERVER_TYPES.has(t))) {
+        return res.status(400).json({ error: "Invalid land type" });
+      }
+
+      const p = await getPool();
+      const rows = [];
+
+      for (const type of types) {
+        const config = getLandConfig(type);
+        const result = await p.request().query(`
+          SELECT
+            '${type}' AS LandType,
+            [${config.objectIdColumn}] AS OBJECTID,
+            [${config.visibleColumns[2]}] AS Area__in_S,
+            [Shape].STAsText() AS Shape
+          FROM ${config.tableName}
+          WHERE [Shape] IS NOT NULL
+        `);
+        const recordset = result.recordset || [];
+        for (const row of recordset) {
+          let geometry = null;
+          if (row.Shape) {
+            try {
+              geometry = wk.parse(row.Shape);
+              if (geometry?.coordinates) {
+                transformCoordinates(geometry.coordinates);
+              }
+            } catch (err) {
+              console.error("WKT parse failed:", err);
+            }
+          }
+          rows.push({
+            ...row,
+            Geometry: geometry,
+          });
+        }
+      }
+
+      if (!rows.length) {
+        return res.status(404).json({ error: "No WKT data found" });
+      }
+      return res.json(rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to fetch WKT data" });
+    }
+  });
 
   app.get("/api/LesseeFullView", authenticateToken, authorizeRoles("Manager", "Admin"), async (req, res) => {
     try {
@@ -120,7 +241,160 @@ export function registerDataRoutes(app, deps) {
     }
   });
 
-  app.put("/api/LandData/:type/:id", authenticateToken, authorizeRoles("Manager", "Admin"), async (req, res) => {
+  // app.get("/api/geoserver/wfs", authenticateToken, authorizeRoles("User", "Manager", "Admin"), async (req, res) => {
+  //   try {
+  //     const typeRaw = String(req.query?.type || "").trim().toLowerCase();
+  //     if (!ALLOWED_GEOSERVER_TYPES.has(typeRaw)) {
+  //       return res.status(400).json({ error: "Invalid land type" });
+  //     }
+
+  //     const objectIdRaw = req.query?.objectId;
+  //     const objectId = Number(objectIdRaw);
+  //     const url = new URL(GEOSERVER_BASE_URL);
+  //     url.searchParams.set("SERVICE", "WFS");
+  //     url.searchParams.set("VERSION", "1.0.0");
+  //     url.searchParams.set("REQUEST", "GetFeature");
+  //     url.searchParams.set("TYPENAME", `Paradip:${typeRaw}`);
+  //     url.searchParams.set("OUTPUTFORMAT", "application/json");
+  //     url.searchParams.set("SRSNAME", "EPSG:4326");
+  //     if (Number.isInteger(objectId) && objectId > 0) {
+  //       url.searchParams.set("CQL_FILTER", `OBJECTID=${objectId}`);
+  //     }
+
+  //     const upstream = await requestJson(url.toString(), {
+  //       rejectUnauthorized: !GEOSERVER_INSECURE_TLS,
+  //     });
+
+  //     const contentType = upstream.contentType || "";
+  //     if (!upstream.ok) {
+  //       let errorBody = upstream.body;
+  //       if (contentType.includes("application/json")) {
+  //         try {
+  //           errorBody = JSON.parse(upstream.body);
+  //         } catch {
+  //           // keep raw body
+  //         }
+  //       }
+  //       return res.status(upstream.status || 502).json({
+  //         error: "GeoServer request failed",
+  //         details: errorBody,
+  //       });
+  //     }
+
+  //     if (contentType.includes("application/json")) {
+  //       try {
+  //         const data = JSON.parse(upstream.body || "null");
+  //         return res.status(upstream.status || 200).json(data);
+  //       } catch {
+  //         return res.status(502).json({
+  //           error: "Invalid GeoServer JSON",
+  //           details: upstream.body,
+  //         });
+  //       }
+  //     }
+
+  //     return res.status(502).json({
+  //       error: "Unexpected GeoServer response",
+  //       details: upstream.body,
+  //     });
+  //   } catch (err) {
+  //     console.error("GeoServer proxy error:", err);
+  //     res.status(502).json({ error: "GeoServer proxy failed" });
+  //   }
+  // });
+
+  // app.get("/api/geoserver/wms-info", authenticateToken, authorizeRoles("User", "Manager", "Admin"), async (req, res) => {
+  //   try {
+  //     const layersRaw = String(req.query?.layers || "").trim();
+  //     const queryLayersRaw = String(req.query?.queryLayers || "").trim();
+  //     const bboxRaw = String(req.query?.bbox || "").trim();
+  //     const widthRaw = String(req.query?.width || "").trim();
+  //     const heightRaw = String(req.query?.height || "").trim();
+  //     const xRaw = String(req.query?.x || "").trim();
+  //     const yRaw = String(req.query?.y || "").trim();
+  //     const srsRaw = String(req.query?.srs || "EPSG:4326").trim();
+
+  //     const isLayerList = (val) => /^[A-Za-z0-9:_,-]+$/.test(val);
+  //     const isBbox = (val) => /^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(val);
+  //     const isInt = (val) => /^\d+$/.test(val);
+  //     const isSrs = (val) => /^EPSG:\d+$/.test(val);
+
+  //     if (!layersRaw || !queryLayersRaw || !bboxRaw || !widthRaw || !heightRaw || !xRaw || !yRaw) {
+  //       return res.status(400).json({ error: "Missing required parameters" });
+  //     }
+  //     if (!isLayerList(layersRaw) || !isLayerList(queryLayersRaw)) {
+  //       return res.status(400).json({ error: "Invalid layers" });
+  //     }
+  //     if (!isBbox(bboxRaw)) {
+  //       return res.status(400).json({ error: "Invalid bbox" });
+  //     }
+  //     if (!isInt(widthRaw) || !isInt(heightRaw) || !isInt(xRaw) || !isInt(yRaw)) {
+  //       return res.status(400).json({ error: "Invalid size or point" });
+  //     }
+  //     if (!isSrs(srsRaw)) {
+  //       return res.status(400).json({ error: "Invalid SRS" });
+  //     }
+
+  //     const url = new URL(GEOSERVER_BASE_URL);
+  //     url.searchParams.set("SERVICE", "WMS");
+  //     url.searchParams.set("VERSION", "1.1.1");
+  //     url.searchParams.set("REQUEST", "GetFeatureInfo");
+  //     url.searchParams.set("LAYERS", layersRaw);
+  //     url.searchParams.set("QUERY_LAYERS", queryLayersRaw);
+  //     url.searchParams.set("STYLES", "");
+  //     url.searchParams.set("BBOX", bboxRaw);
+  //     url.searchParams.set("FEATURE_COUNT", "50");
+  //     url.searchParams.set("HEIGHT", heightRaw);
+  //     url.searchParams.set("WIDTH", widthRaw);
+  //     url.searchParams.set("FORMAT", "image/png");
+  //     url.searchParams.set("INFO_FORMAT", "application/json");
+  //     url.searchParams.set("SRS", srsRaw);
+  //     url.searchParams.set("X", xRaw);
+  //     url.searchParams.set("Y", yRaw);
+
+  //     const upstream = await requestJson(url.toString(), {
+  //       rejectUnauthorized: !GEOSERVER_INSECURE_TLS,
+  //     });
+
+  //     const contentType = upstream.contentType || "";
+  //     if (!upstream.ok) {
+  //       let errorBody = upstream.body;
+  //       if (contentType.includes("application/json")) {
+  //         try {
+  //           errorBody = JSON.parse(upstream.body);
+  //         } catch {
+  //           // keep raw body
+  //         }
+  //       }
+  //       return res.status(upstream.status || 502).json({
+  //         error: "GeoServer request failed",
+  //         details: errorBody,
+  //       });
+  //     }
+
+  //     if (contentType.includes("application/json")) {
+  //       try {
+  //         const data = JSON.parse(upstream.body || "null");
+  //         return res.status(upstream.status || 200).json(data);
+  //       } catch {
+  //         return res.status(502).json({
+  //           error: "Invalid GeoServer JSON",
+  //           details: upstream.body,
+  //         });
+  //       }
+  //     }
+
+  //     return res.status(502).json({
+  //       error: "Unexpected GeoServer response",
+  //       details: upstream.body,
+  //     });
+  //   } catch (err) {
+  //     console.error("GeoServer WMS proxy error:", err);
+  //     res.status(502).json({ error: "GeoServer proxy failed" });
+  //   }
+  // });
+
+  app.put("/api/LandData/:type/:id", authenticateToken, authorizeRoles("User","Manager", "Admin"), async (req, res) => {
     try {
       const config = getLandConfig(req.params.type);
       const rowId = Number(req.params.id);
@@ -198,7 +472,7 @@ export function registerDataRoutes(app, deps) {
   //   }
   // });
 
-  app.get("/api/EoiTable", authenticateToken, authorizeRoles("User","Manager", "Admin"), async (req, res) => {
+  app.get("/api/EoiTable", authenticateToken, authorizeRoles("User", "Manager", "Admin"), async (req, res) => {
     try {
       await ensureEoiInfrastructure();
       const p = await getPool();
