@@ -603,8 +603,8 @@ export function registerDataRoutes(app, deps) {
         .input("objectId", sql.Int, objectId)
         .query(`
           SELECT
-            e.EOIID,
-            COALESCE(u.Username, e.EOIConsumerName, 'Unknown User') AS Username,
+            e.EOIID as EOIID,
+            COALESCE(e.EOIConsumerName, 'Unknown User') AS Username,
             COALESCE(l.EmailID, CASE WHEN u.Username LIKE '%@%' THEN u.Username ELSE '' END, '') AS Email
           FROM dbo.EoiRequests e
           LEFT JOIN dbo.Users u ON u.UserID = e.RequestedByUserID
